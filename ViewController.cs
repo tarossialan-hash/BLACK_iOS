@@ -54,15 +54,23 @@ namespace BlackIOS
 
             View.AddSubview(_webView);
 
-            // Carregar o index.html dos assets
-            var url = NSBundle.MainBundle.GetUrlForResource("Resources/assets/index", "html");
+            // Em projetos .NET iOS, a pasta Resources costuma ser a raiz do Bundle.
+            // Então 'Resources/assets/index.html' vira 'assets/index.html' no bundle.
+            var url = NSBundle.MainBundle.GetUrlForResource("assets/index", "html") 
+                   ?? NSBundle.MainBundle.GetUrlForResource("index", "html")
+                   ?? NSBundle.MainBundle.GetUrlForResource("Resources/assets/index", "html");
+
             if (url != null)
             {
-                _webView.LoadFileUrl(url, url.AbsoluteUrl);
+                // readAccessUrl deve ser o diretório pai para permitir carregar JS/CSS
+                var readAccess = url.RemoveLastPathComponent();
+                _webView.LoadFileUrl(url, readAccess);
             }
             else
             {
-                Console.WriteLine("Erro: index.html não encontrado!");
+                // Fallback debug
+                var html = "<html><body><h1>Erro: index.html não encontrado no Bundle!</h1></body></html>";
+                _webView.LoadHtmlString(html, null);
             }
         }
     }
