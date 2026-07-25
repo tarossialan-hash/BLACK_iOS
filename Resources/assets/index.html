@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <!-- O layout inteiro é desenhado num canvas fixo de 1280x720 (#tv-canvas) e
+         escalado por transform. Por isso o viewport precisa reportar os pixels
+         reais da TV: quem faz o ajuste é o CSS, não o WebView. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>BLACK App - Layout Editável</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=1.0.17">
+    <script>
+        // Anti-FOUC: se já há sessão, o login não deve piscar. Antes isto também
+        // forçava a home visível — mas ao abrir o app SEMPRE sincroniza primeiro
+        // (recarregar() no DOMContentLoaded). Revelar a home aqui fazia ela
+        // aparecer por um instante antes de a sincronização assumir.
+        //
+        // Agora só o login é escondido. Sync e home ficam no default (none) e
+        // quem os controla é o recarregar(), que roda no DOMContentLoaded logo
+        // em seguida e mostra a sincronização primeiro. Não forço o sync visível
+        // aqui de propósito: com !important o recarregar não conseguiria
+        // escondê-lo depois (inline não vence !important) e o sync travaria.
+        if (localStorage.getItem('logged_in_user')) {
+            document.write('<style>#login-screen { display: none !important; }</style>');
+        }
+    </script>
+    <!-- Loader agora é CSS puro (.loader-ring), sem dependência de CDN externo -->
+</head>
+<body>
+<!-- Canvas de 1280x720. Tudo que é UI vive aqui dentro, inclusive modais,
+     teclado e player: o transform de escala só alcança descendentes. -->
+<div id="tv-canvas">
+    <div class="app-container">
+        
+        <!-- Tela de Login (Mesma que ajustamos anteriormente) -->
+        <div id="login-screen" class="screen">
+            <div class="login-left">
+                <img src="logo_black.png" alt="BLACK" class="logo">
+                
+                <h1 class="main-title">
+                    Aplicativo de reprodução para TVs.<br>
+                    Use suas próprias listas e fontes legais.
+                </h1>
+                
+                <ul class="info-list">
+                    <li>• Não fornecemos, hospedamos ou agregamos conteúdo.</li>
+                    <li>• Use apenas mídia que você tem permissão legal para acessar.</li>
+                    <li>• Navegação: setas para mover, OK para selecionar, Voltar para retornar.</li>
+                </ul>
+                
+                <p class="terms-text">Ao continuar, você concorda com os Termos de Uso...</p>
+                
+                <button class="demo-button" onclick="window.location.href='test.html'">Demo</button>
+                <button id="login-update-btn" class="demo-button" style="display: none; border-color: #f39c12; color: #f39c12; margin-left: 10px;" onclick="abrirUpdateConfirmModalDirectly()" tabindex="0">Atualização Disponível</button>
+            </div>
+
+            <div class="login-right">
+                <div class="login-box">
+                    <div class="input-group">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
+                        <input type="text" id="username" placeholder="Usuário" readonly tabindex="0"
+                               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+                    </div>
+                    
+                    <div class="input-group">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>
+                        <!-- new-password, e não off: o Chrome ignora "off" em campo de senha -->
+                        <input type="password" id="password" placeholder="Senha" readonly tabindex="0"
+                               autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+                        <button class="toggle-password-btn" type="button" onclick="togglePasswordVisibility()" tabindex="0">
+                            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        </button>
+                    </div>
+                    
+                    <button class="btn-entrar" onclick="fazerLogin()">ENTRAR</button>
+                    
+                    <div id="login-status"></div>
+                    
+                    <div class="tv-controls-hint">
+                        <span class="hint-item"><span class="key">OK</span> edit</span>
+                        <span class="hint-item"><span class="key">↵</span> enter</span>
+                        <span class="hint-item"><span class="key">←</span> back</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="version">Versão 1.0.0</div>
+        </div>
+
+        <!-- Tela de Sincronização -->
+        <div id="sync-screen" class="screen" style="display: none;">
+            <div class="sync-content">
+                <div class="app-loader" style="--loader-size:250px;">
+                    <img src="logo_black_flat.png" alt="">
+                </div>
+                <h2 id="sync-status-text">Sincronizando canais...</h2>
+                <div class="sync-progress-bar"><div class="sync-progress-fill" id="sync-progress"></div></div>
+            </div>
+        </div>
+
+        <!-- Tela Home (Estilo Nativo BLACK TV) -->
+        <div id="home-screen" class="screen" style="display: none;">
+            <!-- Área de Conteúdo com Scroll -->
+            <div class="home-scroll-area">
+                
+                <!-- Barra de Navegação Superior -->
+                <header class="top-nav">
+                    <div class="nav-left">
+                        <img src="logo_black.png" alt="BLACK" class="nav-logo">
+                        <button class="nav-item active" onclick="mostrarCategoria(this, 'inicio')">Início</button>
+                        <button class="nav-item" onclick="mostrarCategoria(this, 'tv')">TV ao vivo</button>
+                        <button class="nav-item" onclick="mostrarCategoria(this, 'filmes')">Filmes</button>
+                        <button class="nav-item" onclick="mostrarCategoria(this, 'series')">Séries</button>
+                    </div>
+                    <div class="nav-right">
+                        <button id="nav-update-btn" class="action-btn" onclick="abrirUpdateConfirmModalDirectly()" style="display: none; color: #f39c12; font-weight: bold; font-size: 13px; gap: 6px; padding: 0 16px; border: 1px solid #f39c12; border-radius: 20px; background: rgba(243, 156, 18, 0.1); align-items: center; justify-content: center; margin-right: 12px; width: auto; height: 32px;" tabindex="0">
+                            <span style="width: 8px; height: 8px; background-color: #f39c12; border-radius: 50%; display: inline-block;"></span>
+                            Atualizar App
+                        </button>
+                        <button class="action-btn" onclick="buscar()">
+                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        </button>
+                        <button class="action-btn" onclick="recarregar()">
+                            <svg class="icon" style="stroke: #f39c12;" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        </button>
+                        <button class="action-btn" onclick="abrirConfiguracoes()" aria-label="Configurações">
+                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                        </button>
+                        <div class="divider"></div>
+                        <button class="action-btn" onclick="abrirLogoutModal()">
+                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Banner Herói Dinâmico -->
+                <div id="dynamic-hero-banner"></div>
+
+                <!-- Seção Escolha seu Streaming -->
+                <div class="home-section" id="home-streaming-section">
+                    <div class="home-section-title">
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f39c12" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#f39c12" stroke="none"/></svg>
+                        Escolha seu Streaming
+                    </div>
+                    <div class="home-row streaming-row" id="streaming-row">
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(8, 'Netflix', 'streaming-icons/netflix.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/netflix.png" alt="Netflix" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(119, 'Prime Video', 'streaming-icons/primevideo.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/primevideo.png" alt="Prime Video" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(350, 'Apple TV+', 'streaming-icons/appletv.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/appletv.png" alt="Apple TV+" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(283, 'Crunchyroll', 'streaming-icons/crunchyroll.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/crunchyroll.png" alt="Crunchyroll" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(337, 'Disney+', 'streaming-icons/disneyplus.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/disneyplus.png" alt="Disney+" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(307, 'Globoplay', 'streaming-icons/globoplay.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/globoplay.png" alt="Globoplay" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(1899, 'HBO Max', 'streaming-icons/hbomax.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/hbomax.png" alt="HBO Max" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                        <div class="streaming-logo-card" tabindex="0" onclick="abrirProviderScreen(531, 'Paramount+', 'streaming-icons/paramount.png')" onkeydown="if(event.key==='Enter'){event.preventDefault();this.click();}"><img src="streaming-logos/paramount.png" alt="Paramount+" onerror="this.closest('.streaming-logo-card').remove()"></div>
+                    </div>
+                </div>
+
+                <!-- Seção de Novos Filmes -->
+                <div class="home-section" id="home-movies-section" style="display: none;">
+                    <div class="home-section-title">
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f39c12" stroke-width="2.5"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+                        Novos Filmes
+                    </div>
+                    <div class="home-row" id="movie-row"></div>
+                </div>
+
+                <!-- Seção de Novas Séries -->
+                <div class="home-section" id="home-series-section" style="display: none;">
+                    <div class="home-section-title">
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f39c12" stroke-width="2.5"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>
+                        Novas Séries
+                    </div>
+                    <div class="home-row" id="series-row"></div>
+                </div>
+
+            </div>
+        
+        <!-- Tela de TV ao Vivo (Layout 3 colunas) -->
+        <div id="live-tv-screen" class="live-tv-layout" style="display: none;">
+            <div class="live-col-categories">
+                <!-- Categorias injetadas aqui -->
+            </div>
+            
+            <div class="live-col-channels">
+                <!-- Canais da categoria injetados aqui -->
+            </div>
+            
+            <div class="live-col-preview">
+                <div class="live-player-container">
+                    <img id="preview-poster" class="premium-video-player" style="display: none;" src="" alt="Poster" />
+                    <video id="live-player" class="premium-video-player" playsinline autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
+                    <div class="live-player-placeholder" id="live-player-overlay">
+                        <!-- Tela de player inicial / Info -->
+                        <div id="live-player-loader" class="spinner" style="--spinner-size:52px; display: none; position: absolute; top: 50%; left: 50%; margin: -26px 0 0 -26px; z-index: 100;"></div>
+                        <div id="live-player-title" style="position: absolute; bottom: 20px; left: 20px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); z-index: 2;">Selecione um item para assistir</div>
+                    </div>
+                </div>
+                <div class="live-epg-container">
+                    <h3 class="epg-title" id="preview-info-title">Programação</h3>
+                    <div class="epg-list" id="live-epg-list">
+                        <!-- EPG ou Sinopse injetados aqui -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tela de Filmes e Séries (Layout 2 colunas: Categorias + Grade) -->
+        <div id="vod-tv-screen" class="live-tv-layout" style="display: none;">
+            <div class="live-col-categories" id="vod-categories-list">
+                <!-- Categorias injetadas aqui -->
+            </div>
+            <div class="vod-col-grid" id="vod-items-grid">
+                <!-- Grade de capas injetada aqui -->
+            </div>
+        </div>
+
+        <!-- Tela de Catálogo por Streaming (Netflix, etc. - via TMDB) -->
+        <div id="provider-screen" class="provider-screen" style="display: none;">
+            <div class="provider-sidebar">
+                <img class="provider-sidebar-logo" id="provider-sidebar-logo" src="" alt="">
+                <button class="provider-sidebar-btn" onclick="fecharProviderScreen()" title="Voltar" tabindex="0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                </button>
+                <button class="provider-sidebar-btn" onclick="buscar()" title="Buscar" tabindex="0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </button>
+            </div>
+            <div class="provider-content" id="provider-content">
+                <div class="provider-hero" id="provider-hero">
+                    <div class="provider-hero-backdrop" id="provider-hero-backdrop"></div>
+                    <div class="provider-hero-info">
+                        <div class="provider-hero-title" id="provider-hero-title"></div>
+                        <div class="provider-hero-subtitle" id="provider-hero-subtitle"></div>
+                        <div class="provider-hero-meta" id="provider-hero-meta"></div>
+                    </div>
+                </div>
+
+                <div class="home-section">
+                    <div class="home-section-title">Top 10 Hoje</div>
+                    <div class="home-row" id="provider-top10-row"></div>
+                </div>
+
+                <div class="home-section">
+                    <div class="home-section-title">Séries Atualizadas</div>
+                    <div class="home-row" id="provider-series-row"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tela de Busca (Estilo Anexo 2) -->
+        <div id="search-tv-screen" class="search-layout" style="display: none;">
+            <!-- Painel Esquerdo: Teclado Virtual + Campo de Busca -->
+            <div class="search-left-panel">
+                <div class="search-header">
+                    <button class="search-back-round-btn" onclick="fecharBusca()" tabindex="0" title="Voltar">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                    </button>
+                    <span class="search-header-title">Pesquisar</span>
+                </div>
+                <div class="search-input-wrapper">
+                    <svg class="search-input-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" id="search-input-field" placeholder="Buscar..." readonly />
+                </div>
+                
+                <div class="search-keyboard" id="search-virtual-keyboard">
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">a</button>
+                        <button class="sk-key" tabindex="0">b</button>
+                        <button class="sk-key" tabindex="0">c</button>
+                        <button class="sk-key" tabindex="0">d</button>
+                        <button class="sk-key" tabindex="0">e</button>
+                        <button class="sk-key" tabindex="0">f</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">g</button>
+                        <button class="sk-key" tabindex="0">h</button>
+                        <button class="sk-key" tabindex="0">i</button>
+                        <button class="sk-key" tabindex="0">j</button>
+                        <button class="sk-key" tabindex="0">k</button>
+                        <button class="sk-key" tabindex="0">l</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">m</button>
+                        <button class="sk-key" tabindex="0">n</button>
+                        <button class="sk-key" tabindex="0">o</button>
+                        <button class="sk-key" tabindex="0">p</button>
+                        <button class="sk-key" tabindex="0">q</button>
+                        <button class="sk-key" tabindex="0">r</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">s</button>
+                        <button class="sk-key" tabindex="0">t</button>
+                        <button class="sk-key" tabindex="0">u</button>
+                        <button class="sk-key" tabindex="0">v</button>
+                        <button class="sk-key" tabindex="0">w</button>
+                        <button class="sk-key" tabindex="0">x</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">y</button>
+                        <button class="sk-key" tabindex="0">z</button>
+                        <button class="sk-key" tabindex="0">ç</button>
+                        <button class="sk-key" tabindex="0">1</button>
+                        <button class="sk-key" tabindex="0">2</button>
+                        <button class="sk-key" tabindex="0">3</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">4</button>
+                        <button class="sk-key" tabindex="0">5</button>
+                        <button class="sk-key" tabindex="0">6</button>
+                        <button class="sk-key" tabindex="0">7</button>
+                        <button class="sk-key" tabindex="0">8</button>
+                        <button class="sk-key" tabindex="0">9</button>
+                    </div>
+                    <div class="sk-row">
+                        <button class="sk-key" tabindex="0">0</button>
+                    </div>
+                    <div class="sk-row action-row">
+                        <button class="sk-key sk-action" tabindex="0" data-val="BACKSPACE">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM18 9l-6 6M12 9l6 6"/></svg>
+                        </button>
+                        <button class="sk-key sk-action" tabindex="0" data-val="CLEAR">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                        <button class="sk-key sk-space" tabindex="0" data-val=" ">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12v3H4v-3"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Painel Direito: Resultados da Busca -->
+            <div class="search-right-panel">
+                <div class="search-placeholder" id="search-results-placeholder">
+                    Digite para pesquisar conteúdos.
+                </div>
+                <div id="search-results-container" style="display: none; width: 100%;">
+                    <!-- Seção de Filmes -->
+                    <div class="search-section" id="search-movies-section" style="display: none;">
+                        <h2 class="search-section-title">FILMES</h2>
+                        <div class="vod-col-grid" id="search-movies-grid">
+                            <!-- Filmes injetados aqui -->
+                        </div>
+                    </div>
+                    
+                    <!-- Seção de Séries -->
+                    <div class="search-section" id="search-series-section" style="display: none; margin-top: 40px;">
+                        <h2 class="search-section-title">SÉRIES</h2>
+                        <div class="vod-col-grid" id="search-series-grid">
+                            <!-- Séries injetadas aqui -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Configurações -->
+    <div id="settings-screen" style="display:none; position:fixed; inset:0; z-index:9500; background:#121212;">
+        <div class="cfg-layout">
+            <aside class="cfg-menu">
+                <div class="cfg-titulo">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>Configurações</span>
+                </div>
+
+                <button class="cfg-aba active" data-aba="player" tabindex="0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"></polygon></svg>
+                    <span>Player</span>
+                </button>
+                <button class="cfg-aba" data-aba="adulto" tabindex="0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><circle cx="12" cy="11" r="1.6"></circle><path d="M12 12.6V15"></path></svg>
+                    <span>Adulto</span>
+                </button>
+                <button class="cfg-aba" data-aba="informacoes" tabindex="0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    <span>Informações</span>
+                </button>
+                <button class="cfg-aba" data-aba="atualizacao" tabindex="0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                    <span>Atualização</span>
+                </button>
+                <button class="cfg-aba" data-aba="vpn" tabindex="0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+                    <span>VPN</span>
+                </button>
+
+                <div class="cfg-menu-rodape">
+                    <button class="cfg-aba cfg-aba-acao" id="cfg-btn-deslogar" tabindex="0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                        <span>Deslogar</span>
+                    </button>
+                    <button class="cfg-aba cfg-aba-acao" id="cfg-btn-retornar" tabindex="0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                        <span>Retornar</span>
+                    </button>
+                </div>
+            </aside>
+
+            <main class="cfg-conteudo">
+                <!-- Player -->
+                <section class="cfg-painel active" data-painel="player">
+                    <h2 class="cfg-painel-titulo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"></polygon></svg>
+                        Player
+                    </h2>
+                    <div class="cfg-cartao">
+                        <div class="cfg-cartao-titulo">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+                            Tipo de Player
+                        </div>
+                        <div class="cfg-opcoes">
+                            <button class="cfg-opcao" data-formato="m3u8" tabindex="0">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><polygon points="10 9 15 12 10 15 10 9" fill="currentColor" stroke="none"></polygon></svg>
+                                <span>HLS (M3U8)</span>
+                            </button>
+                            <button class="cfg-opcao" data-formato="ts" tabindex="0">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="4" y2="18"></line><line x1="8" y1="4" x2="8" y2="20"></line><line x1="12" y1="7" x2="12" y2="17"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="20" y1="6" x2="20" y2="18"></line></svg>
+                                <span>MPEGTS (TS)</span>
+                            </button>
+                        </div>
+                        <p class="cfg-nota" id="cfg-nota-formato"></p>
+                    </div>
+                </section>
+
+                <!-- Adulto -->
+                <section class="cfg-painel" data-painel="adulto">
+                    <h2 class="cfg-painel-titulo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><circle cx="12" cy="11" r="1.6"></circle><path d="M12 12.6V15"></path></svg>
+                        Adulto
+                    </h2>
+                    <div class="cfg-cartao">
+                        <button class="cfg-switch-linha" id="cfg-switch-adulto" tabindex="0">
+                            <span class="cfg-switch"><span class="cfg-switch-bola"></span></span>
+                            <span class="cfg-switch-texto">Bloqueio Adulto: <strong id="cfg-adulto-estado">Desligado</strong></span>
+                        </button>
+                        <p class="cfg-nota">Quando ligado, categorias adultas deixam de aparecer em TV ao vivo, Filmes e Séries.</p>
+                    </div>
+                </section>
+
+                <!-- VPN -->
+                <section class="cfg-painel" data-painel="vpn">
+                    <h2 class="cfg-painel-titulo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+                        VPN
+                    </h2>
+                    <div class="cfg-cartao">
+                        <button class="cfg-switch-linha" id="cfg-switch-dns" tabindex="0">
+                            <span class="cfg-switch"><span class="cfg-switch-bola"></span></span>
+                            <span class="cfg-switch-texto">Corrigir DNS: <strong id="cfg-dns-estado">Desligado</strong></span>
+                        </button>
+                        <p class="cfg-nota">Ativa uma VPN local que só troca o servidor de DNS do aparelho — o resto da conexão continua normal. Ajuda quando capas, informações ou canais não carregam por causa da DNS da operadora. O Android pode pedir uma permissão de VPN na primeira vez.</p>
+                    </div>
+                    <div class="cfg-cartao">
+                        <div class="cfg-cartao-titulo">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                            Servidor de DNS
+                        </div>
+                        <div class="cfg-opcoes">
+                            <button class="cfg-opcao" data-dns="1.1.1.1" tabindex="0">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                                <span>1.1.1.1 (Cloudflare)</span>
+                            </button>
+                            <button class="cfg-opcao" data-dns="8.8.8.8" tabindex="0">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                                <span>8.8.8.8 (Google)</span>
+                            </button>
+                        </div>
+                        <p class="cfg-nota" id="cfg-nota-dns"></p>
+                    </div>
+                </section>
+
+                <!-- Informações -->
+                <section class="cfg-painel" data-painel="informacoes">
+                    <h2 class="cfg-painel-titulo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                        Informações da Assinatura
+                    </h2>
+                    <div class="cfg-grade" id="cfg-info-grade">
+                        <div class="cfg-info-vazio">Carregando…</div>
+                    </div>
+                </section>
+
+                <!-- Atualização -->
+                <section class="cfg-painel" data-painel="atualizacao">
+                    <h2 class="cfg-painel-titulo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                        Atualização
+                    </h2>
+                    <div class="cfg-cartao">
+                        <div class="cfg-info-item">
+                            <div class="cfg-info-rotulo">Versão instalada</div>
+                            <div class="cfg-info-valor" id="cfg-versao-atual">—</div>
+                        </div>
+                        <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap;">
+                            <button class="cfg-opcao" id="cfg-btn-verificar" tabindex="0" style="flex:0 0 auto;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                                <span>Verificar atualização</span>
+                            </button>
+                            <button class="cfg-opcao" id="cfg-btn-instalar" tabindex="0" style="display:none; flex:0 0 auto; border-color:#f39c12;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                <span id="cfg-btn-instalar-txt">Baixar e instalar</span>
+                            </button>
+                        </div>
+                        <div id="cfg-update-progress" style="display:none; margin-top:14px; height:6px; border-radius:100px; background:rgba(255,255,255,0.1); overflow:hidden;">
+                            <div id="cfg-update-progress-fill" style="height:100%; width:0%; border-radius:100px; background:linear-gradient(90deg,#f39c12,#ffb84d); transition:width 0.2s ease;"></div>
+                        </div>
+
+                        <!-- Card "o que mudou" — só aparece quando há versão nova -->
+                        <div id="cfg-update-info" class="cfg-update-info" style="display:none;">
+                            <div class="cfg-update-info-header">
+                                <span class="cfg-update-badge">Nova versão</span>
+                                <span class="cfg-update-versions">
+                                    <span id="cfg-update-de"></span>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                                    <span id="cfg-update-para"></span>
+                                </span>
+                            </div>
+                            <div class="cfg-update-changelog-title">O que mudou</div>
+                            <ul class="cfg-update-changelog" id="cfg-update-changelog"></ul>
+                        </div>
+
+                        <p class="cfg-nota" id="cfg-update-status"></p>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal VOD -->
+    <div id="vod-detail-screen" style="display:none; position:fixed; inset:0; z-index:9000; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);">
+
+        <!-- Fundo dinâmico (Backdrop blurred) -->
+        <div id="vod-detail-backdrop" style="position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(40px) brightness(0.6) saturate(1.2);transform:scale(1.1);z-index:0;transition:background-image 0.5s ease;"></div>
+        <!-- Overlay suave -->
+        <div style="position:absolute;inset:0;background:linear-gradient(135deg, rgba(10,10,10,0.5) 0%, rgba(5,5,5,0.8) 100%);z-index:1;"></div>
+
+        <!-- Loader Principal (Enquanto busca TMDB) -->
+        <div id="vod-detail-main-loader" class="spinner" style="--spinner-size:48px;position:absolute;z-index:3;display:none;"></div>
+
+        <div id="vod-modal-inner" style="position:relative; width:980px; max-width:1203px; max-height:662px; border-radius:18px; overflow:hidden; display:flex; padding:32px; background:rgba(18,16,14,0.7); box-shadow:0 32px 80px rgba(0,0,0,0.9); box-sizing:border-box; opacity:0; transition:opacity 0.4s ease; z-index:2; border:1px solid rgba(255,255,255,0.05);">
+
+            <!-- Poster esquerdo -->
+            <div style="position:relative; z-index:2; flex-shrink:0;">
+                <img id="vod-detail-poster" src="" alt="Poster"
+                     style="width:260px;min-width:260px;height:390px;object-fit:cover;object-position:center top;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,0.5);">
+                <div id="vod-detail-badges-slot"></div>
+            </div>
+
+            <!-- Conteúdo direito -->
+            <div style="position:relative;z-index:2;flex:1;padding-left:32px;display:flex;flex-direction:column;gap:8px;overflow:hidden;max-height:440px;">
+
+                <!-- Loader -->
+                <div id="vod-detail-loader" class="spinner" style="--spinner-size:36px;position:absolute;top:0;right:0;z-index:10;display:block;"></div>
+
+                <!-- Logo ou Título -->
+                <img id="vod-detail-logo" src="" alt="Logo" style="display:none;max-width:260px;max-height:85px;object-fit:contain;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.9));flex-shrink:0;margin-bottom:2px;">
+                <h1 id="vod-detail-title" style="margin:0 0 2px;font-size:30px;font-weight:900;color:#fff;line-height:1.15;font-family:'Inter',sans-serif;text-shadow:0 2px 8px rgba(0,0,0,0.8);letter-spacing:1px;text-transform:uppercase;"></h1>
+
+                <!-- Título original -->
+                <p id="vod-detail-original" style="margin:0 0 8px;font-size:13px;font-weight:600;color:#fff;font-family:'Inter',sans-serif;"></p>
+
+                <!-- Botões -->
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px;">
+                    <button id="vod-detail-btn-play" class="vod-btn primary" tabindex="0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        Assistir
+                    </button>
+                    <button id="vod-detail-btn-fav" class="vod-btn secondary" tabindex="0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                        Favoritar
+                    </button>
+                </div>
+
+                <!-- Metadata -->
+                <div id="vod-detail-meta" style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;color:#fff;margin-bottom:4px;"></div>
+
+                <!-- Sinopse -->
+                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:0px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    <div style="flex:1;">
+                        <span style="font-size:13px;font-weight:600;color:#fff;font-family:'Inter',sans-serif;">Sinopse</span>
+                        <p id="vod-detail-overview" style="margin:4px 0 0;font-size:14px;line-height:1.45;font-weight:500;color:rgba(255,255,255,0.85);font-family:'Inter',sans-serif;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;"></p>
+                    </div>
+                </div>
+
+                <!-- Créditos -->
+                <div id="vod-detail-credits" style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);font-family:'Inter',sans-serif;line-height:1.6;display:none;padding-top:2px;gap:6px;flex-direction:column;">
+                    <div id="vod-detail-director" style="display:flex;align-items:center;gap:8px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        <span class="content"></span>
+                    </div>
+                    <div id="vod-detail-cast" style="display:flex;align-items:flex-start;gap:8px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span class="content" style="line-height:1.5;"></span>
+                    </div>
+                </div>
+
+                <!-- Seção Temporadas/Episódios (séries) -->
+                <div id="vod-detail-series-section" style="display:none;margin-top:10px;">
+                    <div id="vod-detail-seasons-tabs" style="display:flex;gap:10px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none;"></div>
+                    <h3 id="vod-detail-season-title" style="font-size:14px;font-weight:700;color:#fff;margin:0 0 10px;font-family:'Inter',sans-serif;text-transform:uppercase;">TEMPORADA 1</h3>
+                    <div id="vod-detail-episodes-row" class="home-row" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none;"></div>
+                </div>
+            </div>
+            <!-- O botão X de fechar foi totalmente removido -->
+        </div>
+    </div>
+
+    <!-- Tela de Detalhes de Série — página cheia com herói, separada do
+         modal de filme acima de propósito (fluxos visuais diferentes). -->
+    <div id="series-detail-screen" class="sd-screen" style="display:none;">
+
+        <div id="series-detail-main-loader" class="spinner sd-main-loader" style="--spinner-size:48px; display:none;"></div>
+
+        <div id="series-modal-inner" class="sd-inner">
+            <!-- Backdrop full-screen atrás de tudo -->
+            <div id="series-detail-backdrop" class="sd-hero-backdrop"></div>
+            <div class="sd-hero-gradient"></div>
+
+            <div class="sd-left-panel">
+                <div class="sd-poster-wrap">
+                    <img id="series-detail-poster" class="sd-poster" src="" alt="Poster">
+                </div>
+                <div class="sd-actions">
+                    <button id="series-detail-btn-play" class="sd-action-btn sd-action-primary" tabindex="0">
+                        Assistir
+                    </button>
+                    <button id="series-detail-btn-fav" class="sd-action-btn" tabindex="0" title="Favoritar">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                    </button>
+                    <button id="series-detail-btn-list" class="sd-action-btn" tabindex="0" title="Minha Lista" style="display:none;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="sd-right-panel">
+                <div class="sd-info">
+                    <div id="series-detail-loader" class="spinner sd-info-loader" style="--spinner-size:28px;"></div>
+                    <img id="series-detail-logo" class="sd-logo" src="" alt="Logo" style="display:none;">
+                    <h1 id="series-detail-title" class="sd-title"></h1>
+                    <p id="series-detail-original" class="sd-original"></p>
+                    <div id="series-detail-meta" class="sd-meta"></div>
+
+                    <div id="series-detail-credits" class="sd-credits" style="display:none;">
+                        <div id="series-detail-director" class="sd-credit-row">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            <span class="content"></span>
+                        </div>
+                        <div id="series-detail-cast" class="sd-credit-row">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <span class="content"></span>
+                        </div>
+                    </div>
+
+                    <div class="sd-overview-box">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                        <div class="sd-overview-content">
+                            <p id="series-detail-overview"></p>
+                            <button id="series-detail-overview-toggle" class="sd-overview-toggle" tabindex="0" style="display:none;">Ver mais</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sd-series-section">
+                    <div id="series-detail-seasons-tabs" class="sd-season-tabs"></div>
+                    <h3 id="series-detail-season-title" class="sd-season-title">Temporada 1</h3>
+                    <div id="series-detail-episodes-row" class="sd-episodes-row home-row"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Modal de Confirmação de Saída -->
+    <div id="exit-confirm-modal" class="vod-modal" style="display: none;">
+        <div class="exit-modal-content">
+            <h3 class="exit-modal-title">Deseja realmente sair do aplicativo?</h3>
+            <div class="exit-modal-buttons">
+                <button id="exit-btn-yes" class="vod-btn primary" onclick="confirmarSaida()" tabindex="0">Sim</button>
+                <button id="exit-btn-no" class="vod-btn secondary" onclick="fecharExitModal()" tabindex="0">Não</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Confirmação de Logout -->
+    <div id="logout-confirm-modal" class="vod-modal" style="display: none;">
+        <div class="exit-modal-content">
+            <h3 class="exit-modal-title">Deseja realmente desconectar?</h3>
+            <div class="exit-modal-buttons">
+                <button id="logout-btn-yes" class="vod-btn primary" onclick="confirmarLogout()" tabindex="0">Sim</button>
+                <button id="logout-btn-no" class="vod-btn secondary" onclick="fecharLogoutModal()" tabindex="0">Não</button>
+            </div>
+        </div>
+    </div>
+
+    
+    <!-- Teclado Virtual (OSK) -->
+    <div id="virtual-keyboard" class="vk-container" style="display: none;">
+        <div class="vk-row" id="vk-row-0">
+            <button class="vk-key" tabindex="0">q</button><button class="vk-key" tabindex="0">w</button><button class="vk-key" tabindex="0">e</button><button class="vk-key" tabindex="0">r</button><button class="vk-key" tabindex="0">t</button><button class="vk-key" tabindex="0">y</button><button class="vk-key" tabindex="0">u</button><button class="vk-key" tabindex="0">i</button><button class="vk-key" tabindex="0">o</button><button class="vk-key" tabindex="0">p</button>
+        </div>
+        <div class="vk-row" id="vk-row-1">
+            <button class="vk-key" tabindex="0">a</button><button class="vk-key" tabindex="0">s</button><button class="vk-key" tabindex="0">d</button><button class="vk-key" tabindex="0">f</button><button class="vk-key" tabindex="0">g</button><button class="vk-key" tabindex="0">h</button><button class="vk-key" tabindex="0">j</button><button class="vk-key" tabindex="0">k</button><button class="vk-key" tabindex="0">l</button><button class="vk-key" tabindex="0">/</button>
+        </div>
+        <div class="vk-row" id="vk-row-2">
+            <button class="vk-key" tabindex="0">z</button><button class="vk-key" tabindex="0">x</button><button class="vk-key" tabindex="0">c</button><button class="vk-key" tabindex="0">v</button><button class="vk-key" tabindex="0">b</button><button class="vk-key" tabindex="0">n</button><button class="vk-key" tabindex="0">m</button><button class="vk-key" tabindex="0">?</button><button class="vk-key" tabindex="0">\</button>
+        </div>
+        <div class="vk-row" id="vk-row-3">
+            <button class="vk-key vk-action" tabindex="0" data-val="123">123</button>
+            <button class="vk-key vk-action" tabindex="0" data-val="SHIFT">⬆</button>
+            <button class="vk-key vk-action" tabindex="0" data-val="BACKSPACE">⌫</button>
+            <button class="vk-key vk-space" tabindex="0" data-val=" ">Espaço</button>
+            <button class="vk-key vk-clear" tabindex="0" data-val="CLEAR">Limpar</button>
+            <button class="vk-key vk-submit" tabindex="0" data-val="SUBMIT">✓</button>
+        </div>
+    </div>
+    
+    <div id="fs-player-container" style="display: none; position: fixed; top: 0; left: 0; width: var(--tv-w); height: var(--tv-h); z-index: 99999; background: black;">
+        <video id="fullscreen-player" class="premium-video-player" playsinline style="width: 100%; height: 100%;"></video>
+        <!-- Cobre o player enquanto o stream carrega — sem isto, o WebView
+             mostrava por um instante o play gigante/tela branca padrão do
+             navegador antes do vídeo de fato começar a decodificar. -->
+        <div id="fs-player-loader" style="display:none; position:absolute; inset:0; z-index:5; background:#000; align-items:center; justify-content:center;">
+            <div class="spinner" style="--spinner-size:56px;"></div>
+        </div>
+        <div id="fs-ui" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, transparent 20%, transparent 80%, rgba(0,0,0,0.85) 100%); transition: opacity 0.3s; opacity: 1;">
+            <!-- Logo no meio da tela (alinhado à esquerda) -->
+            <div style="position: absolute; top: 50%; left: 40px; transform: translateY(-50%); display: flex; justify-content: flex-start; pointer-events: none;">
+                <img id="fs-logo" src="" style="height: 110px; max-width: 400px; object-fit: contain; display: none; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.8));" />
+                <div id="fs-title" style="color: white; font-size: 34px; font-weight: bold; font-family: 'Inter', sans-serif; display: none; text-shadow: 0 2px 8px rgba(0,0,0,0.8);"></div>
+            </div>
+
+            <div style="padding: 20px 40px; margin-top: auto; display: flex; flex-direction: column; gap: 15px;">
+
+                <div id="fs-controls-row" style="display: flex; align-items: center; gap: 25px; color: white; font-family: 'Inter', sans-serif;">
+                    
+                    <div id="fs-btn-rewind" tabindex="0" class="fs-control-btn" style="cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                        <svg focusable="false" style="pointer-events: none;" width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                        </svg>
+                    </div>
+
+                    <div id="fs-btn-play" tabindex="0" class="fs-control-btn" style="cursor: pointer;">
+                        <svg focusable="false" style="pointer-events: none; display: none;" id="fs-icon-play" width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        <svg focusable="false" style="pointer-events: none;" id="fs-icon-pause" width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </div>
+                    
+                    <div id="fs-btn-forward" tabindex="0" class="fs-control-btn" style="cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                        <svg focusable="false" style="pointer-events: none;" width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                        </svg>
+                    </div>
+                    
+                    <div id="fs-time-current" style="font-size: 14px; font-variant-numeric: tabular-nums;">00:00:00</div>
+                    
+                    <input type="range" id="fs-progress" value="0" min="0" max="100" step="0.1" style="flex-grow: 1; cursor: pointer; accent-color: #ffffff;" />
+                    
+                    <div id="fs-time-total" style="font-size: 14px; font-variant-numeric: tabular-nums;">-00:00:00</div>
+                    
+                    <!-- Fullscreen button removed -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div><!-- /#tv-canvas -->
+
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+    <script src="app.js?v=1.0.23"></script>
+</body>
+</html>
