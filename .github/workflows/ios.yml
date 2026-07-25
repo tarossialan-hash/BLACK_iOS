@@ -2,7 +2,7 @@ name: Build iOS
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -22,11 +22,10 @@ jobs:
 
     - name: Publish iOS App
       run: |
-        cd BlackIOS
         dotnet publish -f net8.0-ios -c Release -p:BuildIpa=true -p:RuntimeIdentifier=ios-arm64 -p:CodesignKey="-" -p:CodesignProvision="-"
 
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
         name: BlackIOS.ipa
-        path: BlackIOS/bin/Release/net8.0-ios/ios-arm64/publish/*.ipa
+        path: bin/Release/net8.0-ios/ios-arm64/publish/*.ipa
