@@ -49,8 +49,12 @@ namespace BlackIOS
 
             _webView = new WKWebView(View.Bounds, config)
             {
-                AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight
+                AutoresizingMask = UIViewAutoresizing.All
             };
+            
+            _webView.ScrollView.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
+            
+            _webAppInterface.WebView = _webView;
 
             View.AddSubview(_webView);
 
