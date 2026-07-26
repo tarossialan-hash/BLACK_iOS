@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BlackIOS")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+00671bd91005e35112806cee1c2c5b43fda1aa16")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7d24117b34454fbafeb25a8de1e296cf9788cb45")]
 [assembly: System.Reflection.AssemblyProductAttribute("BlackIOS")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BlackIOS")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

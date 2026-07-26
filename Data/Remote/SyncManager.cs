@@ -26,6 +26,7 @@ namespace BlackIOS.Data.Remote
         {
             try
             {
+                await _db.InitAsync();
                 await _db.ClearAll();
 
                 // 1. Live
