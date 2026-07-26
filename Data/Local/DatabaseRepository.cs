@@ -17,11 +17,16 @@ namespace BlackIOS.Data.Local
             var dbPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "..", "Library", "Databases", "black_iptv.db3");
             Directory.CreateDirectory(Path.GetDirectoryName(dbPath));
             _db = new SQLiteAsyncConnection(dbPath);
-            _db.CreateTableAsync<CategoryEntity>().Wait();
-            _db.CreateTableAsync<LiveStreamEntity>().Wait();
-            _db.CreateTableAsync<MovieEntity>().Wait();
-            _db.CreateTableAsync<SeriesEntity>().Wait();
-            _db.CreateTableAsync<FavoriteEntity>().Wait();
+            
+            // Rodar as criações de tabelas fora da Thread Principal (UI) para evitar deadlock no iOS
+            System.Threading.Tasks.Task.Run(async () => 
+            {
+                await _db.CreateTableAsync<CategoryEntity>();
+                await _db.CreateTableAsync<LiveStreamEntity>();
+                await _db.CreateTableAsync<MovieEntity>();
+                await _db.CreateTableAsync<SeriesEntity>();
+                await _db.CreateTableAsync<FavoriteEntity>();
+            }).Wait();
         }
 
         public Task InsertCategories(IEnumerable<CategoryEntity> categories)
